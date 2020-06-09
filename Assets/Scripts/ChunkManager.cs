@@ -1,27 +1,65 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Net.NetworkInformation;
 using System.Transactions;
+using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
 
 [ExecuteInEditMode]
 public class ChunkManager : MonoBehaviour
 {
-    public float scale;
-    public int chunkSize;
-    public float blockSize;
-    public float tolerance;
-    public bool wireFrame;
-    public bool invertMesh;
+    public bool update = false;
+    public float scale = 1;
+    public int chunkSize = 16;
+    public float blockSize = 0.5f;
+    public float tolerance = 0.5f;
+    public int xBound, yBound, zBound;
+    public bool wireFrame = false;
+    public bool invertMesh = false;
     public ITerrainGenerator generator;
+    public ComputeShader chunkComputeShader;
 
-    private Point[] points;
-    private List<Block> borderBlocks;
+    private Point?[] points;
     private int worldSize;
+
+    /*void Start()
+    {
+        SceneView.duringSceneGui += OnScene;
+    }
+
+    void OnScene(SceneView scene)
+    {
+        Event e = Event.current;
+
+        if (e.type == EventType.MouseDown && e.button == 0)
+        {
+            Vector3 mousePos = e.mousePosition;
+            float ppp = EditorGUIUtility.pixelsPerPoint;
+            mousePos.y = scene.camera.pixelHeight - mousePos.y * ppp;
+            mousePos.x *= ppp;
+
+            Ray ray = scene.camera.ScreenPointToRay(mousePos);
+            RaycastHit hit;
+
+            if (Physics.Raycast(ray, out hit))
+            {
+                GameObject go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                go.transform.position = hit.point;
+                Debug.Log("Instantiated Primitive " + hit.point);
+            }
+            e.Use();
+        }
+    }*/
 
     void Update()
     {
+        if (update)
+            update = false;
+        else
+            return;
+
         GameObject[] spheres = GameObject.FindObjectsOfType(typeof(GameObject)) as GameObject[];
         if (spheres != null)
         {
@@ -31,10 +69,9 @@ public class ChunkManager : MonoBehaviour
             }
         }
      
-        worldSize = (int)(chunkSize / blockSize);
+        worldSize = (int)(chunkSize / (blockSize != 0 ? blockSize : 1));
         generator = new SinGenerator();
-        borderBlocks = new List<Block>();
-        points = new Point[worldSize * worldSize * worldSize];
+        points = new Point?[worldSize * worldSize * worldSize];
 
         for (int z = 0; z < worldSize; z++)
         {
@@ -44,9 +81,9 @@ public class ChunkManager : MonoBehaviour
                 {
                     int idx = x + y * worldSize + z * worldSize * worldSize;
                     Vector3 pos = new Vector3(x, y, z) / (worldSize - 1);
-                    float shift = (worldSize - 1) / 2f;
-                    points[idx] = new Point(pos * scale, generator.genVal(pos.x * worldSize - worldSize / 2f, pos.y * worldSize - worldSize / 2f, pos.z * worldSize - worldSize / 2f), tolerance);
-                } // ... ffs TODO: fix genVal args later this is annoying as hell I don't know why it's not doing what I want.
+                    Vector3 p = pos * scale;
+                    points[idx] = new Point { x = p.x, y = p.y, z = p.z, val = generator.genVal(pos.x * (worldSize - 1) - (worldSize - 1) / 2f, pos.y * worldSize - worldSize / 2f, pos.z * worldSize - worldSize / 2f) };
+                } 
             }
         }
 
@@ -56,10 +93,29 @@ public class ChunkManager : MonoBehaviour
     void BuildMesh()
     {
         List<CombineInstance> combine = new List<CombineInstance>();
-        GetComponent<MeshFilter>().sharedMesh.Clear();
         if (points == null) return;
+        Mesh m = GetComponent<MeshFilter>().sharedMesh;
+        m.Clear();
+        ChunkShader.Triangle[] p = ChunkShader.RunShader(chunkComputeShader, points, worldSize, tolerance);
 
-        for (int z = 0; z < worldSize - 1; z++)
+        var vertices = new Vector3[p.Length * 3];
+        var meshTriangles = new int[p.Length * 3];
+
+        for (int i = 0; i < p.Length; i++)
+        {
+            for (int j = 0; j < 3; j++)
+            {
+                meshTriangles[i * 3 + j] = i * 3 + j;
+                vertices[i * 3 + j] = p[i][invertMesh ? 2 - j : j];
+            }
+        }
+
+        m.vertices = vertices;
+        m.triangles = meshTriangles;
+        m.RecalculateBounds();
+        m.RecalculateNormals();
+        
+        /*for (int z = 0; z < worldSize - 1; z++)
         {
             for (int y = 0; y < worldSize - 1; y++)
             {
@@ -67,16 +123,17 @@ public class ChunkManager : MonoBehaviour
                 {
                     Vector3[] verts = new Vector3[12];
                     int idx = x + y * worldSize + z * worldSize * worldSize;
+                    if (idx >= points.Length) continue;
                     int lookup = 0;
 
-                    if (points[idx] != null && points[idx].val < tolerance) lookup |= 128;
-                    if (points[idx + 1] != null && points[idx+1].val < tolerance) lookup |= 64;
-                    if (points[idx + 1 + worldSize] != null && points[idx+1+ worldSize].val < tolerance) lookup |= 4;
-                    if (points[idx + worldSize] != null && points[idx+ worldSize].val < tolerance) lookup |= 8;
-                    if (points[idx + (worldSize * worldSize)] != null && points[idx+(worldSize * worldSize)].val < tolerance) lookup |= 16;
-                    if (points[idx + 1 + (worldSize * worldSize)] != null && points[idx+1+(worldSize * worldSize)].val < tolerance) lookup |= 32;
-                    if (points[idx + 1 + worldSize + (worldSize * worldSize)] != null && points[idx+1+ worldSize + (worldSize * worldSize)].val < tolerance) lookup |= 2;
-                    if (points[idx + worldSize + (worldSize * worldSize)] != null && points[idx+ worldSize + (worldSize * worldSize)].val < tolerance) lookup |= 1;
+                    if (points[idx] != null && points[idx].Value.val < tolerance) lookup |= 128;
+                    if (points[idx + 1] != null && points[idx+1].Value.val < tolerance) lookup |= 64;
+                    if (points[idx + 1 + worldSize] != null && points[idx+1+ worldSize].Value.val < tolerance) lookup |= 4;
+                    if (points[idx + worldSize] != null && points[idx+ worldSize].Value.val < tolerance) lookup |= 8;
+                    if (points[idx + (worldSize * worldSize)] != null && points[idx+(worldSize * worldSize)].Value.val < tolerance) lookup |= 16;
+                    if (points[idx + 1 + (worldSize * worldSize)] != null && points[idx+1+(worldSize * worldSize)].Value.val < tolerance) lookup |= 32;
+                    if (points[idx + 1 + worldSize + (worldSize * worldSize)] != null && points[idx+1+ worldSize + (worldSize * worldSize)].Value.val < tolerance) lookup |= 2;
+                    if (points[idx + worldSize + (worldSize * worldSize)] != null && points[idx+ worldSize + (worldSize * worldSize)].Value.val < tolerance) lookup |= 1;
                     if(lookup != 0 && lookup != 255)
                     {
                         if ((Block.edgeTable[lookup] & 1) != 0) { verts[0] = Point.lerp(points[idx + worldSize + (worldSize * worldSize)], 
@@ -138,40 +195,25 @@ public class ChunkManager : MonoBehaviour
         combinedMesh.RecalculateBounds();
         combinedMesh.RecalculateNormals();
         combinedMesh.RecalculateTangents();
-        GetComponent<MeshFilter>().sharedMesh = combinedMesh;
+
+        GetComponent<MeshFilter>().sharedMesh = combinedMesh;*/
     }
 
-    public class Point
+    private Vector3 lerp(Point? p1, Point? p2)
     {
-        public Vector3 pos;
+        // return (p1.pos + p2.pos) / 2f;
+        Vector3 ret = Vector3.zero;
+        float diff = (tolerance - p1.Value.val) / (p2.Value.val - p1.Value.val);
+        ret.x = p1.Value.x + (p2.Value.x - p1.Value.x) * diff;
+        ret.y = p1.Value.y + (p2.Value.y - p1.Value.y) * diff;
+        ret.z = p1.Value.z + (p2.Value.z - p1.Value.z) * diff;
+        return ret;
+    }
+
+    public struct Point
+    {
+        public float x, y, z;
         public float val;
-        public GameObject totem;
-
-        private static float isoVal;
-
-        public Point(Vector3 pos, float val, float isoVal)
-        {
-            Point.isoVal = isoVal;
-            this.pos = pos;
-            this.val = val;
-            //totem = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-            //totem.name = "useless";
-            //totem.transform.position = pos;
-            //totem.transform.localScale = Vector3.one * 0.1f;
-            //float colVal = (val + 1) / 2f;
-            //totem.GetComponent<Renderer>().sharedMaterial.color = new Color(colVal, colVal, colVal);
-        }
-
-        public static Vector3 lerp(Point p1, Point p2)
-        {
-            return (p1.pos + p2.pos) / 2f;
-            Vector3 ret = Vector3.zero;
-            float diff = (isoVal - p1.val) / (p2.val - p1.val);
-            ret.x = p1.pos.x + (p2.pos.x - p1.pos.x) * diff;
-            ret.y = p1.pos.y + (p2.pos.y - p1.pos.y) * diff;
-            ret.z = p1.pos.z + (p2.pos.z - p1.pos.z) * diff;
-            return ret;
-        }
     }
 
     public class Block
