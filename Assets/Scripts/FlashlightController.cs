@@ -11,7 +11,7 @@ public class FlashlightController : MonoBehaviour
         if (Camera.current != null)
         {
             transform.position = Camera.current.transform.position;
-            transform.forward -= (transform.forward - Camera.current.transform.forward) * 0.1f;
+            transform.forward -= (transform.forward - Camera.current.transform.forward) * 0.2f;
         }
     }
 
@@ -21,8 +21,8 @@ public class FlashlightController : MonoBehaviour
 #if UNITY_EDITOR
         if (!Application.isPlaying)
         {
-            UnityEditor.EditorApplication.QueuePlayerLoopUpdate();
-            UnityEditor.SceneView.RepaintAll();
+            EditorApplication.QueuePlayerLoopUpdate();
+            SceneView.RepaintAll();
         }
 #endif
     }

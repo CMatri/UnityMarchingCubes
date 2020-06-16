@@ -34,9 +34,9 @@ public class ChunkShader
         }
     }
 
-    public static Triangle[] RunShader(ComputeShader shader, Point?[] p, int numPointsPerAxis, float isoVal)
+    public static Triangle[] RunShader(ComputeShader shader, Chunk.Point?[] p, int numPointsPerAxis, float isoVal)
     {
-        Point[] data = new Point[p.Length];
+        Chunk.Point[] data = new Chunk.Point[p.Length];
         for (int i = 0; i < p.Length; i++)
             if (p[i] != null)
                 data[i] = p[i].Value;
